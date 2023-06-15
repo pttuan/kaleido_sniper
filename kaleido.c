@@ -1,5 +1,18 @@
-// By Tuan Phan <pttuan@gmailcom>
-
+/* 
+ * Copyright (c) 2023 Tuan Phan <pttuan@gmail.com>.
+ * 
+ * This program is free software: you can redistribute it and/or modify  
+ * it under the terms of the GNU General Public License as published by  
+ * the Free Software Foundation, version 3.
+ *
+ * This program is distributed in the hope that it will be useful, but 
+ * WITHOUT ANY WARRANTY; without even the implied warranty of 
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU 
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License 
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
 #include "BluetoothSerial.h"
 
 #ifdef USE_PIN
@@ -326,6 +339,7 @@ void kaleido_service()
         mInitDelay++;
       break;
     case 8:
+      mTimeout = 0;
       mArray[mNum++] = kaleido_decode(c);
       if (kaleido_decode(c) == 0x77) {
         kaleido_parse_info();
@@ -419,7 +433,7 @@ void kaleido_service()
   }
 
   if (!mNum) {
-    if (mTimeout == 400) {
+    if (mTimeout == 1000) {
       //Reset Kaleido due to timeout
       if (!mKaleidoPad) {
         kaleido_send(reset1, sizeof(reset1));
