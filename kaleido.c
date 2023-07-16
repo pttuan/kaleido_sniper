@@ -50,7 +50,7 @@ void setup() {
   Serial2.begin(57600, SERIAL_8N1, 16, 17);
   SerialBT.begin(device_name); //Bluetooth device name
   Serial.printf("The device with name \"%s\" is started.\nNow you can pair it with Bluetooth!\n\r", device_name.c_str());
-  //Serial.printf("The device with name \"%s\" and MAC address %s is started.\nNow you can pair it with Bluetooth!\n\r", device_name.c_str(), SerialBT.getMacString()); // Use this after the MAC method is implemented
+
   #ifdef USE_PIN
     SerialBT.setPin(pin);
     Serial.printf("Using PIN");
@@ -169,7 +169,7 @@ enum KALEIDO_INFO_IDX {
   SV_IDX = 1,
   BT_IDX = 3,
   ET_IDX = 4,
-  POWER_IDX = 6,
+  POWER_IDX = 5,
   DRUM_IDX = 7,
   SMOKE_IDX = 8,
 }; // base 1
@@ -470,14 +470,20 @@ void kaleido_send_cmd(int cmd, int val)
   switch (cmd) {
   case CMD_SV:
     {
-      char data[] = {0,0x1,0x8,0x6C,0x58,0x28,0x6C,0x58,0x4C,0x6C,0x14,0x70,0x5C,0x58,0x6C,0x7B,0x0,0x0,0x0,0x45,0x44,0x77};
+      char data[] = {0,0x1,0x8,0x5C,0x6C,0x70,0x68,0x54,0x7B,0x58,0x45,0x44,0x77,0,0x1,0x8,0x6C,0x58,0x28,0x6C,0x58,0x4C,0x6C,0x14,0x70,0x5C,0x58,0x6C,0x7B,0x0,0x0,0x0,0x45,0x44,0x77};
+      char data1[] = {0,0x1,0x8,0x6C,0x14,0x68,0x58,0x4C,0x6C,0x14,0x70,0x5C,0x58,0x6C,0x45,0x44,0x77};
       if (val > 230) {
         Serial.printf("Set SV: %d not valid\n\r", val);
         return;
       }
       Serial.printf("Sending sv:%d\n\r", val);
-      int new_len = kaleido_cmd_inject_value(data, sizeof(data), val, 16, 3);
-      kaleido_send_encode(data, new_len);
+      if (val == 0)
+        // turn off heat completely
+        kaleido_send_encode(data1, sizeof(data1));
+      else {
+        int new_len = kaleido_cmd_inject_value(data, sizeof(data), val, 29, 3);
+        kaleido_send_encode(data, new_len);
+      }
     }
     break;
   case CMD_HPM:
