@@ -43,6 +43,8 @@ int mInitDelay;
 //artisan global variables
 char mBTCmd[64];
 int mBTCur;
+char mTempMode; // 0:C, 1:F
+char mSafeGuard; // 1: start monitoring, 0: stop monitoring
 
 void setup() {
   Serial.begin(115200);
@@ -65,6 +67,8 @@ void setup() {
   
   // artisan setup
   mBTCur = 0;
+  mTempMode = 0;
+  mSafeGuard = 0;
 }
 
 /* For catching communication between Kaleido and its pad */
@@ -100,6 +104,20 @@ void setup() {
 //   }
 //   delay(20);
 // }
+
+int artisan_convert_temp(int val, int dir)
+{
+  if (dir == 0) {
+    // to Artisan
+    if (mTempMode == 1)
+      return ((val * 9 / 5) + 32); // C->F
+  } else {
+    // from Artisan
+    if (mTempMode == 1)
+      return ((val - 32) * 5 / 9); // F->C
+  }
+  return val;
+}
 
 void kaleido_send(char array[], int len)
 {
@@ -471,13 +489,18 @@ void kaleido_send_cmd(int cmd, int val)
   case CMD_SV:
     {
       char data[] = {0,0x1,0x8,0x6C,0x58,0x28,0x6C,0x58,0x4C,0x6C,0x14,0x70,0x5C,0x58,0x6C,0x7B,0x0,0x0,0x0,0x45,0x44,0x77};
+      char data1[] = {0,0x1,0x8,0x6C,0x14,0x68,0x58,0x4C,0x6C,0x14,0x70,0x5C,0x58,0x6C,0x45,0x44,0x77};
       if (val > 230) {
         Serial.printf("Set SV: %d not valid\n\r", val);
         return;
       }
       Serial.printf("Sending sv:%d\n\r", val);
-      int new_len = kaleido_cmd_inject_value(data, sizeof(data), val, 16, 3);
-      kaleido_send_encode(data, new_len);
+      if (val == 0) {
+        kaleido_send_encode(data1, sizeof(data1));
+      } else {
+        int new_len = kaleido_cmd_inject_value(data, sizeof(data), val, 16, 3);
+        kaleido_send_encode(data, new_len);
+      }
     }
     break;
   case CMD_HPM:
@@ -539,22 +562,6 @@ void kaleido_send_cmd(int cmd, int val)
   }
 }
 
-void artisan_send_ok()
-{
-  Serial.printf("Sending init ok\n\r");
-  SerialBT.write('#');
-  SerialBT.write('1');
-  SerialBT.write('\n');
-}
-
-void artisan_send_err()
-{
-  Serial.printf("Sending init error\n\r");
-  SerialBT.write('@');
-  SerialBT.write('1');
-  SerialBT.write('\n');
-}
-
 int artisan_info_inject_value(char array[], int len, int val, int idx, int num_digit)
 {
   int count = kaleido_encode_digits(val, array, idx, false);
@@ -565,22 +572,59 @@ int artisan_info_inject_value(char array[], int len, int val, int idx, int num_d
   return new_len;
 }
 
-void artisan_send_current_info()
+void artisan_send_ping()
 {
-  char array[] = {'0',',','0','0','0',',','0','0','0',',','0','0','0',',','0','0','0',',','0','0','0',',','C','\n'};
-  int new_len;
+  char array[] = {'{', '0', '}', '\n'};
+  char array1[] = {'{',
+                    '0', ',',
+                    'S', 'N', ':', 'A', 'R',
+                    '}', '\n'}; // sent when stop sampling
+  char *ptr;
+  int len;
 
-  new_len = artisan_info_inject_value(array, sizeof(array), mETmp, 2, 3);
-  new_len = artisan_info_inject_value(array, new_len, mBTmp, 6 - (sizeof(array) - new_len) , 3);
-  new_len = artisan_info_inject_value(array, new_len, mPower, 10 - (sizeof(array) - new_len) , 3);
-  new_len = artisan_info_inject_value(array, new_len, mSmoke, 14 - (sizeof(array) - new_len) , 3);
-  new_len = artisan_info_inject_value(array, new_len, mSV, 18 - (sizeof(array) - new_len) , 3);
-  Serial.printf("Sending current info :0,%d,%d,%d,%d,%d\n\r", mETmp, mBTmp, mPower, mSmoke, mSV);
-  for (int i = 0; i < new_len; i++)
-    Serial.printf("%c ", array[i]);
+  if (mSafeGuard == 0) {
+    len = sizeof(array1);
+    ptr = &array1[0];
+  } else {
+    len = sizeof(array);
+    ptr = &array[0];
+  }
+  Serial.printf("Sending ping\n\r");
+  for (int i = 0; i < len; i++)
+    Serial.printf("%c ", ptr[i]);
   Serial.printf("\n\r");
 
-  for (int i = 0; i < new_len; i++)
+  for (int i = 0; i < len; i++)
+    SerialBT.write(ptr[i]);
+}
+
+void artisan_send_current_info()
+{
+  int len;
+  char array[] = {'{',
+                    '0', ',',
+                    'E', 'T', ':', '0','0','0',',',
+                    'B', 'T', ':', '0','0','0',',',
+                    'H', 'P', ':', '0','0','0',',',
+                    'F', 'C', ':', '0','0','0',',',
+                    'T', 'S', ':', '0','0','0',
+                    '}', '\n'};
+
+  if (mSafeGuard == 0)
+    return;
+
+  len = artisan_info_inject_value(array, sizeof(array), artisan_convert_temp(mETmp, 0), 6, 3);
+  len = artisan_info_inject_value(array, len, artisan_convert_temp(mBTmp, 0), 13 - (sizeof(array) - len) , 3);
+  len = artisan_info_inject_value(array, len, mPower, 20 - (sizeof(array) - len) , 3);
+  len = artisan_info_inject_value(array, len, mSmoke, 27 - (sizeof(array) - len) , 3);
+  len = artisan_info_inject_value(array, len, artisan_convert_temp(mSV, 0), 34 - (sizeof(array) - len) , 3);
+  //Serial.printf("Sending current info : {0,ET:%d,BT:%d,HP:%d,FC:%d,TS:%d}\n\r", mETmp, mBTmp, mPower, mSmoke, mSV);
+
+  //for (int i = 0; i < len; i++)
+  //  Serial.printf("%c ", array[i]);
+  //Serial.printf("\n\r");
+
+  for (int i = 0; i < len; i++)
     SerialBT.write(array[i]);
 }
 
@@ -588,13 +632,23 @@ void artisan_cmd_set_sv(String sv)
 {
   Serial.printf("Parsing sv:%s\n\r", sv);
   //Set SV temp
-  kaleido_send_cmd(CMD_SV, sv.toInt());
+  kaleido_send_cmd(CMD_SV, artisan_convert_temp(sv.toInt(), 1));
+}
+
+void artisan_cmd_set_hs(String mode)
+{
+  Serial.printf("Parsing hs:%s\n\r", mode);
+  //Set SV 0 if mode = 0, or HPM = 0 if mode = 1
+  if (mode == "0")
+    kaleido_send_cmd(CMD_SV, 0);
+  else
+    kaleido_send_cmd(CMD_HPM, 0);
 }
 
 void artisan_cmd_set_hpm(String mode)
 {
   Serial.printf("Parsing hpa mode:%s\n\r", mode);
-  if (mode == "A") {
+  if (mode == "1") {
     kaleido_send_cmd(CMD_HPM, 1);
   } else {
     kaleido_send_cmd(CMD_HPM, 0);
@@ -655,7 +709,7 @@ void artisan_cmd_set_io3(String val)
 void artisan_cmd_set_cooler(String mode)
 {
   Serial.printf("set cooler mode:%s\n\r", mode);
-  if (mode == "ON") {
+  if (mode == "1") {
     // set cooler on
     kaleido_send_cmd(CMD_COOLER, 1);
   } else {
@@ -669,32 +723,49 @@ void artisan_process_cmd(String cmd)
   String type, parameters;
   int pos;
 
-  if (cmd == "READ") {
-    return artisan_send_current_info();
+  if (cmd.length() < 2 || cmd.charAt(0) != '{' || cmd.charAt(cmd.length() - 1) != '}') {
+    Serial.printf("Invalid command: %s\n\r", cmd);
+    return;
   }
 
-  pos = cmd.indexOf(';');
-  if (pos == -1) {
-    pos = cmd.indexOf(',');
-    if (pos == -1) {
-      Serial.printf("Failed to parse cmd: %s\n\r", cmd);
-      return;
-    }
+  cmd = cmd.substring(1, cmd.length() - 1);
+  if (cmd.length() < 2 || cmd.charAt(0) != '[' || cmd.charAt(cmd.length() - 1) != ']') {
+    Serial.printf("Invalid command: %s\n\r", cmd);
+    return;
   }
 
-  type = cmd.substring(0, pos);
-  parameters = cmd.substring(pos + 1);
+  cmd = cmd.substring(1, cmd.length() - 1);
+  if (cmd == "PI") {
+    return artisan_send_ping();
+  }
+
+  pos = cmd.indexOf(' ');
+  if (pos == -1)
+    type = cmd;
+  else {
+    type = cmd.substring(0, pos);
+    parameters = cmd.substring(pos + 1);
+  }
 
   Serial.printf("type:%s parameters:%s\n\r", type, parameters);
 
-  if (type == "CHAN") {
-    if (parameters != "2100") {
-      Serial.printf("%s not valid\n\r");
-      return artisan_send_err();
+  if (type == "TU") {
+    if (parameters == "F") {
+      mTempMode = 1;
     } else
-      return artisan_send_ok();
+      mTempMode = 0;
+    return artisan_send_ping();
   }
-  if (type == "EVT") {
+  if (type == "SC") {
+    mSafeGuard = 1;
+    return artisan_send_ping();
+  }
+  if (type == "CL") {
+    mSafeGuard = 0;
+    return artisan_send_ping();
+  }
+
+  if (type == "EV") {
     if (parameters == "1") {
       Serial.printf("Charged event, reduce power to 20\n\r");
       kaleido_send_cmd(CMD_OT1, 20);
@@ -712,38 +783,20 @@ void artisan_process_cmd(String cmd)
       return;
     }
   }
-  if (type == "UNITS") {
-    // just accept anythings
-    return artisan_send_ok();
-  }
-  if (type == "FILT") {
-    // just accept anythings
-    return artisan_send_ok();
-  }
-  if (type == "SV")
+  if (type == "TS")
     return artisan_cmd_set_sv(parameters);
-  if (type == "HPM")
+  if (type == "HS")
+    return artisan_cmd_set_hs(parameters);
+  if (type == "AH")
     return artisan_cmd_set_hpm(parameters);
-  if (type == "OT1")
+  if (type == "HP")
     return artisan_cmd_set_ot1(parameters);
-  if (type == "OT2")
+  if (type == "FC")
     return artisan_cmd_set_ot2(parameters);
-  if (type == "IO3")
+  if (type == "RC")
     return artisan_cmd_set_io3(parameters);
-  if (type == "CLDN")
+  if (type == "CS")
     return artisan_cmd_set_cooler(parameters);
-  if (type == "PID") {
-    pos = parameters.indexOf(';');
-    if (pos == -1) {
-      Serial.printf("Failed to parse cmd: %s\n\r", cmd);
-      return;
-    }
-    type = parameters.substring(0, pos);
-    parameters = parameters.substring(pos + 1);
-    if (type == "SV")
-      return artisan_cmd_set_sv(parameters);
-  }
-
   Serial.printf("Unknown type %s %s\n\r", type, parameters);
 }
 
@@ -772,6 +825,7 @@ void artisan_service()
     } else
       mBTCmd[mBTCur++] = c;
   }
+  artisan_send_current_info();
 }
 
 /* Enumulating communicaton with kaleido pad */
@@ -877,5 +931,5 @@ void loop()
   artisan_service();
   kaleido_service();
   //snipper();
-  delay(20);
+  delay(10);
 }
